@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>MAZE - التكيف الذكي</title>
+    <style>
+        :root { 
+            --main-bg: #05050a; 
+            --panel-bg: #0a0a15; 
+            --accent: #00d2ff; 
+            --win: #39ff14; 
+            --wall-color: #ffffff;
+            --danger: #ff4d4d;
+            --glass: rgba(255, 255, 255, 0.05);
+        }
+        * { box-sizing: border-box; touch-action: none; user-select: none; }
+        
+        body { 
+            margin: 0; background: var(--main-bg); color: white; 
+            font-family: 'Segoe UI', sans-serif; height: 100vh; display: flex; overflow: hidden; 
+        }
+
+        .main-layout { 
+            display: flex; width: 100vw; height: 100vh; 
+            flex-direction: row; /* الوضع الافتراضي عرضي */
+        }
+
+        /* لوحة التحكم */
+        .side-panel {
+            width: 280px; background: var(--panel-bg); border-left: 1px solid #1a1a3a;
+            display: flex; flex-direction: column; padding: 20px; gap: 15px; z-index: 10;
+            box-shadow: 10px 0 30px rgba(0,0,0,0.5); flex-shrink: 0;
+        }
+
+        .side-panel h2 { 
+            margin: 0; color: var(--accent); font-size: 1.4rem; text-align: center; 
+            text-shadow: 0 0 10px var(--accent);
+        }
+
+        .control-group {
+            background: var(--glass); border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px; padding: 10px; display: flex; flex-direction: column; align-items: center;
+        }
+
+        .label { font-size: 0.65rem; color: #666688; text-transform: uppercase; }
+        .value { font-family: monospace; font-size: 1.6rem; color: #fff; }
+        
+        .level-badge {
+            background: var(--accent); color: #000; padding: 2px 12px; border-radius: 15px;
+            font-weight: bold; font-size: 1rem; margin-top: 5px;
+        }
+
+        /* منطقة اللعب */
+        .game-area { 
+            flex-grow: 1; display: flex; justify-content: center; align-items: center; 
+            padding: 15px; position: relative; overflow: hidden;
+        }
+
+        canvas { 
+            background: #000; border: 2px solid #1a1a3a;
+            box-shadow: 0 0 40px rgba(0,0,0,0.8);
+            max-width: 100%; max-height: 100%;
+            cursor: crosshair;
+        }
+
+        button { 
+            border: none; color: white; padding: 12px; border-radius: 10px; 
+            cursor: pointer; font-weight: bold; background: #1a1a3a;
+            border: 1px solid #3a3a6a; margin-top: auto;
+        }
+
+        /* التبديل للجوال (الوضع العمودي) */
+        @media (max-aspect-ratio: 1/1) or (max-width: 768px) {
+            .main-layout { flex-direction: column; }
+            .side-panel { 
+                width: 100%; height: auto; flex-direction: row; padding: 10px; 
+                flex-wrap: wrap; justify-content: space-around; border-left: none; 
+                border-bottom: 1px solid #1a1a3a;
+            }
+            .side-panel h2 { width: 100%; font-size: 1.1rem; margin-bottom: 5px; }
+            .control-group { flex: 1; min-width: 80px; padding: 5px; }
+            .value { font-size: 1.1rem; }
+            button { width: 100%; margin-top: 5px; padding: 8px; font-size: 0.8rem; }
+            .game-area { padding: 5px; }
+        }
+
+        #notification {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0);
+            background: var(--win); color: black; padding: 20px 40px; border-radius: 50px;
+            font-size: 1.5rem; font-weight: bold; z-index: 100; transition: 0.4s;
+        }
+        #notification.show { transform: translate(-50%, -50%) scale(1); }
+    </style>
+</head>
+<body>
+
+    <div id="notification">اكتمل المسار! ✨</div>
+
+    <div class="main-layout">
+        <div class="side-panel">
+            <h2>المتاهة</h2>
+            <div class="control-group">
+                <span class="label">المرحلة</span>
+                <span class="level-badge" id="levelText">1</span>
+            </div>
+            <div class="control-group">
+                <span class="label">التوقيت</span>
+                <span class="value" id="timerDisplay">00:00:00</span>
+            </div>
+            <button onclick="restartGame()">إعادة المحاولة 🔄</button>
+        </div>
+
+        <div class="game-area" id="gameArea">
+            <canvas id="mazeCanvas"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('mazeCanvas');
+        const ctx = canvas.getContext('2d');
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        function playSound(freq, type, dur) {
+            try {
+                const osc = audioCtx.createOscillator();
+                const g = audioCtx.createGain();
+                osc.type = type; osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                g.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + dur);
+                osc.connect(g); g.connect(audioCtx.destination);
+                osc.start(); osc.stop(audioCtx.currentTime + dur);
+            } catch(e){}
+        }
+
+        let level = 1, seconds = 0, timerInterval;
+        let gridSizeX, gridSizeY, cellSize, maze = [], drawing = false, playerPath = [];
+
+        function initLevel() {
+            const area = document.getElementById('gameArea');
+            const isPortrait = area.clientHeight > area.clientWidth;
+
+            // تحديد عدد المربعات بناءً على اتجاه الشاشة
+            let baseSize = 7 + level;
+            if (isPortrait) {
+                gridSizeX = baseSize;
+                gridSizeY = Math.floor(baseSize * (area.clientHeight / area.clientWidth));
+            } else {
+                gridSizeY = baseSize;
+                gridSizeX = Math.floor(baseSize * (area.clientWidth / area.clientHeight));
+            }
+
+            // تحديد حجم الكانفاس ليكون عالي الدقة
+            canvas.width = 1000;
+            canvas.height = 1000 * (gridSizeY / gridSizeX);
+            cellSize = canvas.width / gridSizeX;
+
+            generateMaze();
+            playerPath = [];
+            drawing = false;
+            document.getElementById('levelText').innerText = level;
+            draw();
+        }
+
+        function generateMaze() {
+            maze = Array.from({ length: gridSizeY }, () => 
+                Array.from({ length: gridSizeX }, () => ({ n: true, s: true, e: true, w: true, v: false }))
+            );
+            let stack = [], curr = { x: 0, y: 0 };
+            maze[0][0].v = true;
+            while (true) {
+                let neighbors = [];
+                if (curr.x > 0 && !maze[curr.y][curr.x-1].v) neighbors.push('w');
+                if (curr.x < gridSizeX-1 && !maze[curr.y][curr.x+1].v) neighbors.push('e');
+                if (curr.y > 0 && !maze[curr.y-1][curr.x].v) neighbors.push('n');
+                if (curr.y < gridSizeY-1 && !maze[curr.y+1][curr.x].v) neighbors.push('s');
+
+                if (neighbors.length > 0) {
+                    let dir = neighbors[Math.floor(Math.random() * neighbors.length)];
+                    let next = {...curr};
+                    if (dir==='w') { maze[curr.y][curr.x].w=false; next.x--; maze[next.y][next.x].e=false; }
+                    else if (dir==='e') { maze[curr.y][curr.x].e=false; next.x++; maze[next.y][next.x].w=false; }
+                    else if (dir==='n') { maze[curr.y][curr.x].n=false; next.y--; maze[next.y][next.x].s=false; }
+                    else if (dir==='s') { maze[curr.y][curr.x].s=false; next.y++; maze[next.y][next.x].n=false; }
+                    maze[next.y][next.x].v = true; stack.push(curr); curr = next;
+                } else if (stack.length > 0) curr = stack.pop(); else break;
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 3;
+            for (let y = 0; y < gridSizeY; y++) {
+                for (let x = 0; x < gridSizeX; x++) {
+                    const c = maze[y][x], px = x*cellSize, py = y*cellSize;
+                    ctx.beginPath();
+                    if (c.n) { ctx.moveTo(px, py); ctx.lineTo(px+cellSize, py); }
+                    if (c.s) { ctx.moveTo(px, py+cellSize); ctx.lineTo(px+cellSize, py+cellSize); }
+                    if (c.e) { ctx.moveTo(px+cellSize, py); ctx.lineTo(px+cellSize, py+cellSize); }
+                    if (c.w) { ctx.moveTo(px, py); ctx.lineTo(px, py+cellSize); }
+                    ctx.stroke();
+                }
+            }
+            const p = cellSize*0.2;
+            ctx.fillStyle="#39ff14"; ctx.fillRect(p, p, cellSize-p*2, cellSize-p*2);
+            ctx.fillStyle="#ff4d4d"; ctx.fillRect((gridSizeX-1)*cellSize+p, (gridSizeY-1)*cellSize+p, cellSize-p*2, cellSize-p*2);
+
+            if (playerPath.length > 0) {
+                ctx.beginPath(); ctx.strokeStyle="#00d2ff"; ctx.lineWidth=cellSize*0.3;
+                ctx.lineCap='round'; ctx.lineJoin='round';
+                ctx.moveTo(playerPath[0].x, playerPath[0].y);
+                playerPath.forEach(pt => ctx.lineTo(pt.x, pt.y));
+                ctx.stroke();
+            }
+        }
+
+        function getPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const cx = e.touches ? e.touches[0].clientX : e.clientX;
+            const cy = e.touches ? e.touches[0].clientY : e.clientY;
+            return { x: (cx-rect.left)*(canvas.width/rect.width), y: (cy-rect.top)*(canvas.height/rect.height) };
+        }
+
+        const handleStart = (e) => {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const pos = getPos(e);
+            if (pos.x < cellSize && pos.y < cellSize) {
+                drawing = true; playerPath = [pos];
+                playSound(440, 'sine', 0.1);
+            }
+        };
+
+        const handleMove = (e) => {
+            if (!drawing) return;
+            const pos = getPos(e);
+            const gx = Math.floor(pos.x/cellSize), gy = Math.floor(pos.y/cellSize);
+            
+            if (gx<0 || gx>=gridSizeX || gy<0 || gy>=gridSizeY) { stopDrawing(true); return; }
+
+            const c = maze[gy][gx], lx = pos.x%cellSize, ly = pos.y%cellSize, b = cellSize*0.15;
+            if ((c.n && ly<b) || (c.s && ly>cellSize-b) || (c.w && lx<b) || (c.e && lx>cellSize-b)) {
+                stopDrawing(true); return;
+            }
+
+            playerPath.push(pos);
+            if (gx === gridSizeX-1 && gy === gridSizeY-1) {
+                drawing = false; 
+                playSound(880, 'sine', 0.2); 
+                document.getElementById('notification').classList.add('show');
+                setTimeout(() => { document.getElementById('notification').classList.remove('show'); level++; initLevel(); }, 1000);
+            }
+            draw();
+        };
+
+        function stopDrawing(error) {
+            if (error && drawing) playSound(150, 'sawtooth', 0.2);
+            drawing = false; playerPath = []; draw();
+        }
+
+        function restartGame() { level = 1; seconds = 0; initLevel(); }
+
+        setInterval(() => {
+            seconds++;
+            const h = Math.floor(seconds/3600).toString().padStart(2,'0');
+            const m = Math.floor((seconds%3600)/60).toString().padStart(2,'0');
+            const s = (seconds%60).toString().padStart(2,'0');
+            document.getElementById('timerDisplay').innerText = `${h}:${m}:${s}`;
+        }, 1000);
+
+        canvas.addEventListener('mousedown', handleStart);
+        window.addEventListener('mousemove', handleMove);
+        window.addEventListener('mouseup', () => drawing = false);
+        canvas.addEventListener('touchstart', (e) => { e.preventDefault(); handleStart(e); });
+        window.addEventListener('touchmove', (e) => { e.preventDefault(); handleMove(e); });
+        window.addEventListener('touchend', () => drawing = false);
+
+        window.addEventListener('resize', initLevel);
+        initLevel();
+    </script>
+</body>
+</html>
