@@ -13,17 +13,33 @@
             --wall-color: #ffffff;
             --danger: #ff4d4d;
             --glass: rgba(255, 255, 255, 0.05);
+            --body-bg: #020205; /* لون خلفية الأطراف الفارغة */
         }
         * { box-sizing: border-box; touch-action: none; user-select: none; }
         
         body { 
-            margin: 0; background: var(--main-bg); color: white; 
-            font-family: 'Segoe UI', sans-serif; height: 100vh; display: flex; overflow: hidden; 
+            margin: 0; 
+            background: var(--body-bg); 
+            color: white; 
+            font-family: 'Segoe UI', sans-serif; 
+            height: 100vh; 
+            display: flex; 
+            justify-content: center; /* توسيط اللعبة أفقياً */
+            align-items: center; /* توسيط اللعبة عمودياً */
+            overflow: hidden; 
         }
 
         .main-layout { 
-            display: flex; width: 100vw; height: 100vh; 
-            flex-direction: row; /* الوضع الافتراضي عرضي */
+            display: flex; 
+            width: 100vw; 
+            height: 100vh; 
+            max-width: 1200px; /* أقصى عرض مسموح به للعبة على الشاشات الكبيرة */
+            max-height: 900px; /* أقصى ارتفاع مسموح به للعبة لتظل متناسقة */
+            background: var(--main-bg);
+            flex-direction: row; 
+            box-shadow: 0 0 50px rgba(0,0,0,0.5); /* تأثير ظل لفصل اللعبة عن الأطراف */
+            border-radius: 16px; /* انحناء خفيف لأطراف اللعبة يعطي مظهراً حديثاً */
+            overflow: hidden;
         }
 
         /* لوحة التحكم */
@@ -72,7 +88,15 @@
 
         /* التبديل للجوال (الوضع العمودي) */
         @media (max-aspect-ratio: 1/1) or (max-width: 768px) {
-            .main-layout { flex-direction: column; }
+            body { background: var(--main-bg); } /* إلغاء الأطراف في الجوال لتأخذ اللعبة الشاشة كاملة */
+            .main-layout { 
+                flex-direction: column; 
+                width: 100vw; 
+                height: 100vh; 
+                max-width: 100vw; 
+                max-height: 100vh;
+                border-radius: 0;
+            }
             .side-panel { 
                 width: 100%; height: auto; flex-direction: row; padding: 10px; 
                 flex-wrap: wrap; justify-content: space-around; border-left: none; 
